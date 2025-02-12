@@ -1,0 +1,326 @@
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const { generateWallet, generateSecretKey, getStxAddress } = require('@stacks/wallet-sdk');
+const { TransactionVersion } = require('@stacks/transactions');
+const { STACKS_MAINNET } = require('@stacks/network');
+const TelegramBot = require('node-telegram-bot-api');
+const crypto = require('crypto');
+
+require('dotenv').config();
+
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
+const IV_LENGTH = 16;
+
+const app = express();
+const PORT = 5000;
+
+app.use(express.json());
+app.use(cors());
+
+mongoose.connect(process.env.MONGO_URI)
+    .then(() => console.log('MongoDB Connected'))
+    .catch(err => console.error('MongoDB Connection Error:', err));
+
+const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
+
+const userSchema = new mongoose.Schema({
+    telegramId: { type: String, required: true, unique: true },
+    walletAddress: { type: String, required: true },
+    encryptedPrivateKey: { type: String, required: true },
+    securityCode: { type: String, required: false }
+});
+const User = mongoose.model('User', userSchema);
+
+// Encryption & Decryption Helpers
+function encrypt(text) {
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
+    let encrypted = cipher.update(text);
+    encrypted = Buffer.concat([encrypted, cipher.final()]);
+    return iv.toString('hex') + ':' + encrypted.toString('hex');
+}
+
+function decrypt(text) {
+    const parts = text.split(':');
+    const iv = Buffer.from(parts.shift(), 'hex');
+    const encryptedText = Buffer.from(parts.join(':'), 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
+    let decrypted = decipher.update(encryptedText);
+    decrypted = Buffer.concat([decrypted, decipher.final()]);
+    return decrypted.toString();
+}
+
+// Generate Wallet
+async function createWallet() {
+    const secretKey = generateSecretKey(128);
+    const wallet = await generateWallet({ secretKey, password: 'password' });
+
+    const account = wallet.accounts[0];
+    const address = getStxAddress({ account, transactionVersion: TransactionVersion });
+
+    return {
+        address,
+        privateKey: encrypt(account.stxPrivateKey),
+        seedPhrase: secretKey
+    };
+}
+
+// Telegram Bot Commands
+bot.onText(/\/start/, async (msg) => {
+    const chatId = msg.chat.id;
+    const telegramId = String(msg.from.id);
+
+    try {
+        const existingUser = await User.findOne({ telegramId });
+        if (existingUser) {
+            return bot.sendMessage(chatId, `🚀 *You're already registered!*  
+🔹 *Wallet Address:* \`${existingUser.walletAddress}\`  
+\nUse /help to see available commands.`, { parse_mode: "Markdown" });
+        }
+
+        const wallet = await createWallet();
+        const words = wallet.seedPhrase.split(' ');
+        const randomIndexes = [...new Set([
+            Math.floor(Math.random() * 12),
+            Math.floor(Math.random() * 12),
+            Math.floor(Math.random() * 12)
+        ])]; // Ensure unique indexes
+        const challengeWords = randomIndexes.map(i => words[i]);
+
+        const sentMessage = await bot.sendMessage(chatId, `🚨 *IMPORTANT: Secure Your Seed Phrase!* 🚨  
+
+🔹 *Wallet Address:* \`${wallet.address}\`  
+🔹 *Seed Phrase:* \`${wallet.seedPhrase}\`  
+
+⚠️ *The bot does NOT store this!* If you lose it, you lose access to your wallet forever.  
+✅ *Write it down and store it securely!*  
+
+⏳ *This message will be deleted in 15 minutes for security.*  
+
+Have you saved your seed phrase?  
+1️⃣ Yes, I saved it  
+2️⃣ No, I need more time`, {
+            parse_mode: "Markdown",
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: "✅ Yes", callback_data: `seed_saved_${telegramId}` }],
+                    [{ text: "❌ No", callback_data: `seed_not_saved_${telegramId}` }]
+                ]
+            }
+        });
+
+        // Auto-delete after 15 minutes
+        setTimeout(() => {
+            bot.deleteMessage(chatId, sentMessage.message_id).catch(() => { });
+        }, 900000);
+
+        bot.once("callback_query", async (callbackQuery) => {
+            if (!callbackQuery.data.includes(`_${telegramId}`)) return;
+
+            if (callbackQuery.data.startsWith("seed_saved")) {
+                // DELETE SEED MESSAGE IMMEDIATELY
+                bot.deleteMessage(chatId, sentMessage.message_id).catch(() => { });
+
+                bot.sendMessage(chatId, `📌 *Seed phrase deleted! Now, verify you wrote it down correctly:*  
+
+1️⃣ Enter word #${randomIndexes[0] + 1}  
+2️⃣ Enter word #${randomIndexes[1] + 1}  
+3️⃣ Enter word #${randomIndexes[2] + 1}  
+
+(Reply in order, separated by spaces)`, { parse_mode: "Markdown" });
+
+                bot.once("message", async (response) => {
+                    const userResponse = response.text.trim().split(" ");
+                    if (
+                        userResponse.length === 3 &&
+                        userResponse[0] === challengeWords[0] &&
+                        userResponse[1] === challengeWords[1] &&
+                        userResponse[2] === challengeWords[2]
+                    ) {
+                        bot.sendMessage(chatId, "✅ *Seed phrase verified! Your wallet is ready to use.* 🚀 \nUse /help to see available commands", { parse_mode: "Markdown" });
+
+                        await new User({
+                            telegramId,
+                            walletAddress: wallet.address,
+                            encryptedPrivateKey: wallet.privateKey,
+                            securityCode: null
+                        }).save();
+                    } else {
+                        bot.sendMessage(chatId, "❌ *Incorrect seed phrase! Use /start again and make sure you saved it properly.*");
+                    }
+                });
+            } else if (callbackQuery.data.startsWith("seed_not_saved")) {
+                bot.sendMessage(chatId, "⚠️ *Please take your time and save your seed phrase securely.*\nUse /start again when you're ready.");
+            }
+        });
+
+    } catch (error) {
+        console.error("Error creating wallet:", error);
+        bot.sendMessage(chatId, "❌ An error occurred while creating your wallet. Please try again later.");
+    }
+});
+
+
+
+
+// Reset Wallet with PIN
+bot.onText(/\/resetwallet/, async (msg) => {
+    const chatId = msg.chat.id;
+    const telegramId = String(msg.from.id);
+
+    const user = await User.findOne({ telegramId });
+    if (!user || !user.securityCode) {
+        return bot.sendMessage(chatId, "❌ You have no security PIN set. You cannot reset your wallet.");
+    }
+
+    bot.sendMessage(chatId, "🔐 Enter your 5-digit security PIN to reset your wallet:", {
+        reply_markup: { force_reply: true }
+    }).then((sentMessage) => {
+        bot.onReplyToMessage(chatId, sentMessage.message_id, async (msg) => {
+            const pin = msg.text.trim();
+            const encryptedPin = crypto.createHash("sha256").update(pin).digest("hex");
+
+            if (encryptedPin !== user.securityCode) {
+                return bot.sendMessage(chatId, "❌ Incorrect PIN! Wallet reset denied.");
+            }
+
+            const newWallet = await createWallet();
+            bot.sendMessage(chatId, `🚨 *Your wallet has been reset!* 🚨
+
+🔹 *New Wallet Address:* \`${newWallet.address}\`  
+🔹 *New Seed Phrase:* \`${newWallet.seedPhrase}\`  
+
+⚠️ *This will NOT be stored! Write it down securely.*`, { parse_mode: "Markdown" });
+
+            setTimeout(() => {
+                bot.deleteMessage(chatId, msg.message_id);
+            }, 120000);
+
+            user.walletAddress = newWallet.address;
+            user.encryptedPrivateKey = newWallet.privateKey;
+            await user.save();
+        });
+    });
+});
+
+// Help Command
+bot.onText(/\/help/, (msg) => {
+    const chatId = msg.chat.id;
+    const helpMessage = `
+  Available Commands:
+  /start - Create or restore your wallet
+  /help - Show available commands
+  /balance - Check your wallet balance
+  /send <amount> <address> - Send STX tokens
+  /receive - Get your wallet address
+  /setpin - Set a security PIN for wallet recovery
+  /resetwallet - Reset wallet (requires PIN)
+    `;
+    bot.sendMessage(chatId, helpMessage);
+});
+
+app.listen(PORT, () => {
+    console.log(`Server is running on http://localhost:${PORT}`);
+});
+
+
+bot.onText(/\/setpin/, async (msg) => {
+    const chatId = msg.chat.id;
+    const telegramId = String(msg.from.id);
+
+    try {
+        const user = await User.findOne({ telegramId });
+
+        if (!user) {
+            return bot.sendMessage(chatId, "⚠️ You need to create a wallet first! Use /start.");
+        }
+
+        if (user.securityCode) {
+            return bot.sendMessage(chatId, "🔐 You already have a security PIN set.\n\nDo you want to reset it?", {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: "✅ Yes, reset PIN", callback_data: `reset_pin_${telegramId}` }],
+                        [{ text: "❌ No, keep my PIN", callback_data: `keep_pin_${telegramId}` }]
+                    ]
+                }
+            });
+        }
+
+        askForPin(chatId, telegramId);
+    } catch (error) {
+        console.error("Error checking PIN:", error);
+        bot.sendMessage(chatId, "❌ An error occurred. Please try again later.");
+    }
+});
+
+bot.on("callback_query", async (callbackQuery) => {
+    const chatId = callbackQuery.message.chat.id;
+    const telegramId = String(callbackQuery.from.id);
+
+    if (callbackQuery.data === `reset_pin_${telegramId}`) {
+        bot.sendMessage(chatId, "🔄 Resetting PIN... Please enter your new 5-digit security PIN:", {
+            reply_markup: { force_reply: true }
+        }).then((sentMessage) => {
+            bot.onReplyToMessage(chatId, sentMessage.message_id, async (msg) => {
+                savePin(msg, telegramId, chatId);
+            });
+        });
+    } else if (callbackQuery.data === `keep_pin_${telegramId}`) {
+        bot.sendMessage(chatId, "👍 Your current PIN is unchanged.");
+    }
+});
+
+function askForPin(chatId, telegramId) {
+    bot.sendMessage(chatId, "🔒 Set a 5-digit security PIN for wallet recovery. Reply with your PIN:", {
+        reply_markup: { force_reply: true }
+    }).then((sentMessage) => {
+        bot.onReplyToMessage(chatId, sentMessage.message_id, async (msg) => {
+            savePin(msg, telegramId, chatId);
+        });
+    });
+}
+
+async function savePin(msg, telegramId, chatId) {
+    const pin = msg.text.trim();
+
+    if (!/^\d{5}$/.test(pin)) {
+        return bot.sendMessage(chatId, "⚠️ Invalid PIN! Please enter a *5-digit number.*");
+    }
+
+    const encryptedPin = crypto.createHash("sha256").update(pin).digest("hex");
+    await User.findOneAndUpdate({ telegramId }, { securityCode: encryptedPin });
+
+    bot.sendMessage(chatId, "✅ Security PIN set successfully!");
+}
+
+
+bot.onText(/\/balance/, async (msg) => {
+    const chatId = msg.chat.id;
+    const telegramId = String(msg.from.id);
+
+    try {
+        const user = await User.findOne({ telegramId });
+        if (!user) {
+            return bot.sendMessage(chatId, 'You are not registered yet. Use /start to register.');
+        }
+
+        const address = user.walletAddress;
+        const url = `https://api.hiro.so/extended/v1/address/${address}/balances`;
+        const response = await fetch(url);
+        const accountData = await response.json();
+
+        const mrBeansContractAddress = 'SP1MASMF30DRR4KDR5TG4RZEEVHBKS1ZX4TJZ8P06.mrbeans-stxcity::Beans';
+        const mrBeansBalanceData = accountData.fungible_tokens[mrBeansContractAddress];
+
+        if (mrBeansBalanceData) {
+            const balance = mrBeansBalanceData.balance / 1e6;
+            bot.sendMessage(chatId, `Your mrbeans token balance is: ${balance} Beans`);
+        } else {
+            bot.sendMessage(chatId, 'No mrbeans token balance found for your wallet.');
+        }
+    } catch (error) {
+        console.error('Error fetching balance:', error);
+        bot.sendMessage(chatId, 'An error occurred while fetching your balance. Please try again later.');
+    }
+});
