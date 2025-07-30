@@ -30,46 +30,27 @@ mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('MongoDB Connected'))
   .catch(err => console.error('MongoDB Connection Error:', err));
 
-const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { 
-  polling: {
-    interval: 300,
-    autoStart: true,
-    params: {
-      timeout: 10
-    }
-  }
-});
+// Initialize bot without polling (webhook mode for production)
+const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: false });
 
-// Handle polling errors gracefully
-bot.on('polling_error', (error) => {
-  console.log('Polling error:', error.message);
-  if (error.message.includes('409 Conflict')) {
-    console.log('⚠️  Another bot instance detected. Waiting before retry...');
-    // Stop polling and wait longer before restarting
-    bot.stopPolling();
-    setTimeout(() => {
-      console.log('🔄 Attempting to restart polling...');
-      try {
-        bot.startPolling({ restart: true });
-      } catch (restartError) {
-        console.log('Failed to restart polling:', restartError.message);
-      }
-    }, 15000); // Wait 15 seconds instead of 5
-  }
-});
+// Set webhook URL for production
+const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://stx-academic-bot.onrender.com/webhook';
 
-// Graceful shutdown handling
-process.on('SIGTERM', () => {
-  console.log('🛑 Received SIGTERM, stopping bot polling...');
-  bot.stopPolling();
-  process.exit(0);
-});
-
-process.on('SIGINT', () => {
-  console.log('🛑 Received SIGINT, stopping bot polling...');
-  bot.stopPolling();
-  process.exit(0);
-});
+// Set up webhook in production
+if (process.env.NODE_ENV === 'production') {
+  console.log('🔗 Setting up webhook for production...');
+  bot.setWebHook(WEBHOOK_URL)
+    .then(() => {
+      console.log('✅ Webhook set successfully:', WEBHOOK_URL);
+    })
+    .catch((error) => {
+      console.error('❌ Failed to set webhook:', error.message);
+    });
+} else {
+  // Use polling for local development
+  console.log('� Starting polling for development...');
+  bot.startPolling();
+}
 
 // const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN);
 
