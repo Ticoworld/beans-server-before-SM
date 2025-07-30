@@ -6,11 +6,12 @@
   "type": "commonjs",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node test-health.js",
     "start": "node index.js",
     "dev": "nodemon index.js",
     "mongo": "mongod --dbpath ./data/db",
-    "setup": "npm install && echo 'Copy .env.example to .env and configure your tokens'"
+    "setup": "npm install && echo 'Copy .env.example to .env and configure your tokens'",
+    "health": "node test-health.js"
   },
   "dependencies": {
     "@scure/bip39": "^1.5.4",
@@ -24,10 +25,10 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "mongoose": "^8.9.5",
+    "node-fetch": "^3.3.2",
     "node-telegram-bot-api": "^0.66.0",
     "nodemon": "^3.1.9"
   },
-  "devDependencies": {},
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Ticoworld/beans-server.git"

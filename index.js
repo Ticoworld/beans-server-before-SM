@@ -1052,6 +1052,37 @@ async function createWalletFromSeed(seedPhrase) {
 
 
 
+// Health check endpoint for uptime monitoring
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'alive',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    botStatus: 'running'
+  });
+});
+
+// Self-ping to keep bot alive (for services like Render, Railway, etc.)
+function keepAlive() {
+  const url = process.env.SELF_PING_URL || `http://localhost:${PORT}/health`;
+  
+  setInterval(async () => {
+    try {
+      const fetch = (await import('node-fetch')).default;
+      const response = await fetch(url);
+      console.log(`Keep-alive ping: ${response.status} at ${new Date().toISOString()}`);
+    } catch (error) {
+      console.log(`Keep-alive ping failed: ${error.message}`);
+    }
+  }, 14 * 60 * 1000); // Ping every 14 minutes (within free tier limits)
+}
+
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
+  
+  // Start keep-alive pings if enabled
+  if (process.env.ENABLE_KEEP_ALIVE === 'true') {
+    console.log('Keep-alive pings enabled');
+    keepAlive();
+  }
 });
