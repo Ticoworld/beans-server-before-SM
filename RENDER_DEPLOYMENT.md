@@ -39,11 +39,11 @@
 Click "Environment" tab and add:
 
 ```env
-TELEGRAM_BOT_TOKEN=your_real_bot_token_here
-MONGO_URI=mongodb+srv://username:password@cluster.mongodb.net/telegramBot
-ENCRYPTION_KEY=your-super-secure-32-character-key-here-now
+TELEGRAM_BOT_TOKEN=8386426140:AAGRAnp7KRIs-EWD5ftM5gz-o0XeHtpwzFU
+MONGO_URI=mongodb+srv://timothyticoworld:RewardScholarsBot@rewardscholarsbot.hc8pg7h.mongodb.net/?retryWrites=true&w=majority&appName=RewardScholarsBot
+ENCRYPTION_KEY=fdf418bc4d12995bedadafc8a06c1936ef343b5d22918033cc2e70c0c0c610cc
 ENABLE_KEEP_ALIVE=true
-SELF_PING_URL=https://your-app-name.onrender.com/health
+SELF_PING_URL=https://stx-academic-bot.onrender.com/health
 PORT=5000
 NODE_ENV=production
 ```
@@ -51,13 +51,13 @@ NODE_ENV=production
 ### D. Deploy
 1. Click "Create Web Service"
 2. Wait for deployment (3-5 minutes)
-3. Your bot will be live at: `https://your-app-name.onrender.com`
+3. Your bot will be live at: `https://stx-academic-bot.onrender.com`
 
 ## Step 3: Test Your Deployment
 
 1. **Test Health Endpoint**:
    ```bash
-   curl https://your-app-name.onrender.com/health
+   curl https://stx-academic-bot.onrender.com/health
    ```
 
 2. **Test Telegram Bot**:
@@ -75,7 +75,7 @@ NODE_ENV=production
 3. Add monitor:
    ```
    Type: HTTP(s)
-   URL: https://your-app-name.onrender.com/health
+   URL: https://stx-academic-bot.onrender.com/health
    Interval: 5 minutes
    ```
 4. Set up email alerts
@@ -84,12 +84,12 @@ NODE_ENV=production
 
 Update your app's `SELF_PING_URL` with the real URL:
 1. In Render dashboard → Environment Variables
-2. Update: `SELF_PING_URL=https://your-actual-app-name.onrender.com/health`
+2. Update: `SELF_PING_URL=https://stx-academic-bot.onrender.com/health`
 3. Click "Manual Deploy" to restart
 
 ## ✅ Your Bot is Now Live 24/7!
 
-- 🌐 **Web URL**: https://your-app-name.onrender.com
+- 🌐 **Web URL**: https://stx-academic-bot.onrender.com
 - 🤖 **Bot**: Working in Telegram
 - 📊 **Health**: /health endpoint for monitoring
 - 🔄 **Keep-Alive**: Self-pinging every 14 minutes
