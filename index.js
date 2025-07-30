@@ -44,13 +44,31 @@ const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, {
 bot.on('polling_error', (error) => {
   console.log('Polling error:', error.message);
   if (error.message.includes('409 Conflict')) {
-    console.log('⚠️  Another bot instance detected. Stopping polling...');
+    console.log('⚠️  Another bot instance detected. Waiting before retry...');
+    // Stop polling and wait longer before restarting
     bot.stopPolling();
     setTimeout(() => {
-      console.log('🔄 Restarting polling...');
-      bot.startPolling();
-    }, 5000);
+      console.log('🔄 Attempting to restart polling...');
+      try {
+        bot.startPolling({ restart: true });
+      } catch (restartError) {
+        console.log('Failed to restart polling:', restartError.message);
+      }
+    }, 15000); // Wait 15 seconds instead of 5
   }
+});
+
+// Graceful shutdown handling
+process.on('SIGTERM', () => {
+  console.log('🛑 Received SIGTERM, stopping bot polling...');
+  bot.stopPolling();
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('🛑 Received SIGINT, stopping bot polling...');
+  bot.stopPolling();
+  process.exit(0);
 });
 
 // const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN);
