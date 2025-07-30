@@ -3,17 +3,10 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const { generateWallet, generateSecretKey, getStxAddress, restoreWalletAccounts } = require('@stacks/wallet-sdk');
 const {
-  makeContractCall,
+  makeSTXTokenTransfer,
   broadcastTransaction,
-  uintCV,
   standardPrincipalCV,
-  noneCV,
-  someCV,
-  stringUtf8CV,
-  FungibleConditionCode,
-  createAsset,
   PostConditionMode,
-  Pc,
   TransactionVersion
 } = require('@stacks/transactions');
 const { STACKS_MAINNET } = require('@stacks/network');
@@ -38,6 +31,18 @@ mongoose.connect(process.env.MONGO_URI)
   .catch(err => console.error('MongoDB Connection Error:', err));
 
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
+// const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN);
+
+app.post("/webhook", (req, res) => {
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
+
+app.get("/", (req, res) => {
+  res.send("Server is running");
+});
+
+
 
 function encryptPrivateKey(privateKey, pin) {
   // Derive a key by combining the PIN and the PRIVATE_KEY_SECRET
@@ -84,7 +89,7 @@ bot.onText(/\/start/, async (msg) => {
 
   // Check if the command is used in a private message or group
   if (msg.chat.type !== 'private') {
-    return bot.sendMessage(chatId, "🚨 *Please use the start command in a private message (DM) with the bot.*\n\nClick here to start: [Start DM](t.me/Beans_tipbot)", { parse_mode: "Markdown" });
+    return bot.sendMessage(chatId, "🚨 *Please use the start command in a private message (DM) with the bot.*\n\nClick here to start: [Start DM](t.me/StacksTipBot)", { parse_mode: "Markdown" });
   }
 
   try {
@@ -193,7 +198,24 @@ Please enter the following words from your seed phrase:
                   }).save();
 
                   await bot.deleteMessage(chatId, pinRequestMessage.message_id).catch(() => { });
-                  bot.sendMessage(chatId, "✅ Your wallet is secured with your PIN and ready to use! \nUse /help to see available commands.", { parse_mode: "Markdown" });
+                  bot.sendMessage(chatId, `✅ Your wallet is secured with your PIN and ready to use! 
+
+🎓 *Welcome to the Academic Rewards System!*
+
+Your wallet is now set up for receiving academic rewards. Here's what you can do:
+
+• Check your balance with /balance
+• Learn how to fund your wallet with /fund  
+• View academic rankings with /leaderboard
+• Get help anytime with /help
+
+🌟 *Start earning STX rewards for:*
+• Class attendance and participation
+• Assignment completion and quality
+• Academic excellence and improvement  
+• Positive behavior and collaboration
+
+Good luck with your academic journey! 📚`, { parse_mode: "Markdown" });
                 });
               });
             });
@@ -217,38 +239,68 @@ bot.onText(/\/resetwallet/, async (msg) => {
   const chatId = msg.chat.id;
   const telegramId = String(msg.from.id);
 
-  const user = await User.findOne({ telegramId });
-  if (!user || !user.securityCode) {
-    return bot.sendMessage(chatId, "❌ You have no security PIN set. You cannot reset your wallet.");
+  // If the command is issued in a group, instruct the user to check their DM.
+  let targetChatId = chatId;
+  if (msg.chat.type !== 'private') {
+    bot.sendMessage(
+      chatId,
+      `@${msg.from.username || telegramId}, please check your DM for wallet reset instructions.`
+    );
+    targetChatId = telegramId; // Use DM for further interaction.
   }
 
-  // Prompt for the current PIN
-  bot.sendMessage(chatId, "🔐 Enter your 5-digit security PIN to reset your wallet:", {
-    reply_markup: { force_reply: true }
-  }).then((sentMessage) => {
-    bot.onReplyToMessage(chatId, sentMessage.message_id, async (pinMsg) => {
-      const pinMessageId = pinMsg.message_id;
-      const pin = pinMsg.text.trim();
-      const encryptedPin = crypto.createHash("sha256").update(pin).digest("hex");
+  // Check if the user exists.
+  const user = await User.findOne({ telegramId });
+  if (!user) {
+    return bot.sendMessage(targetChatId, "❌ You are not registered. Please use /start to create your wallet.");
+  }
 
-      // Delete the PIN message immediately for security
-      bot.deleteMessage(chatId, pinMessageId).catch(() => { });
+  // Check if the user has a security PIN set.
+  if (!user.securityCode) {
+    return bot.sendMessage(targetChatId, "❌ You have not set a security PIN. You cannot reset your wallet.");
+  }
 
-      if (encryptedPin !== user.securityCode) {
-        return bot.sendMessage(chatId, "❌ Incorrect PIN! Wallet reset denied.");
-      }
+  // Send DM prompt for the current PIN.
+  const dmPrompt = await bot.sendMessage(
+    targetChatId,
+    "🔐 Enter your 5-digit security PIN to reset your wallet:",
+    { reply_markup: { force_reply: true } }
+  );
 
-      // Create a new wallet
-      const newWallet = await createWallet();
-      const words = newWallet.seedPhrase.split(' ');
-      const randomIndexes = generateUniqueIndexes(words.length, 3);
-      const challengeWords = randomIndexes.map(i => words[i]);
+  // Listen for the next message in the DM.
+  bot.once("message", async (pinMsg) => {
+    // Ensure the message is from the correct chat and, if replying, that it refers to our prompt.
+    if (
+      String(pinMsg.chat.id) !== targetChatId.toString() ||
+      (pinMsg.reply_to_message && pinMsg.reply_to_message.message_id !== dmPrompt.message_id)
+    ) {
+      return;
+    }
+    
+    // Immediately delete the PIN message for security.
+    const pinMessageId = pinMsg.message_id;
+    bot.deleteMessage(targetChatId, pinMessageId).catch(() => {});
 
-      // Send the new wallet details (seed phrase) to the user
-      const sentSeedMsg = await bot.sendMessage(chatId, `🚨 *Your wallet has been reset!* 🚨
-            
+    const pin = pinMsg.text.trim();
+    const encryptedPin = crypto.createHash("sha256").update(pin).digest("hex");
+
+    if (encryptedPin !== user.securityCode) {
+      return bot.sendMessage(targetChatId, "❌ Incorrect PIN! Wallet reset denied.");
+    }
+
+    // Create a new wallet.
+    const newWallet = await createWallet();
+    const words = newWallet.seedPhrase.split(' ');
+    const randomIndexes = generateUniqueIndexes(words.length, 3);
+    const challengeWords = randomIndexes.map(i => words[i]);
+
+    // Send the new wallet details (seed phrase) to the user.
+    const sentSeedMsg = await bot.sendMessage(
+      targetChatId,
+      `🚨 *Your wallet has been reset!* 🚨
+      
 🔹 *New Wallet Address:* \`${newWallet.address}\`
-🔹 *New Seed Phrase:* \`${newWallet.seedPhrase}\`
+🔹 *New Seed Phrase:* \`${newWallet.seedPhrase}\` 
 
 ⚠️ *This will NOT be stored! Write it down securely.*
 ✅ *Write it down and store it securely!*
@@ -257,7 +309,8 @@ bot.onText(/\/resetwallet/, async (msg) => {
 
 Have you saved your seed phrase?
 1️⃣ Yes, I saved it
-2️⃣ No, I need more time`, {
+2️⃣ No, I need more time`,
+      {
         parse_mode: "Markdown",
         reply_markup: {
           inline_keyboard: [
@@ -265,77 +318,125 @@ Have you saved your seed phrase?
             [{ text: "❌ No", callback_data: `seed_not_saved_${telegramId}` }]
           ]
         }
-      });
+      }
+    );
 
-      // Auto-delete the seed phrase message after 15 minutes
-      setTimeout(() => {
-        bot.deleteMessage(chatId, sentSeedMsg.message_id).catch(() => { });
-      }, 900000);
+    // Auto-delete the seed phrase message after 15 minutes.
+    setTimeout(() => {
+      bot.deleteMessage(targetChatId, sentSeedMsg.message_id).catch(() => {});
+    }, 900000);
 
-      bot.once("callback_query", async (callbackQuery) => {
-        if (!callbackQuery.data.includes(`_${telegramId}`)) return;
+    // Listen for the callback query for seed phrase confirmation.
+    bot.once("callback_query", async (callbackQuery) => {
+      if (!callbackQuery.data.includes(`_${telegramId}`)) return;
 
-        if (callbackQuery.data.startsWith("seed_saved")) {
-          // Delete the seed phrase message immediately upon confirmation
-          bot.deleteMessage(chatId, sentSeedMsg.message_id).catch(() => { });
+      if (callbackQuery.data.startsWith("seed_saved")) {
+        // Delete the seed phrase message immediately upon confirmation.
+        bot.deleteMessage(targetChatId, sentSeedMsg.message_id).catch(() => {});
 
-          // Ask the user to verify their seed phrase by entering 3 words
-          bot.sendMessage(chatId, `📌 *Verify your seed phrase:*
+        // Ask the user to verify their seed phrase by entering 3 words.
+        bot.sendMessage(
+          targetChatId,
+          `📌 *Verify your seed phrase:*
 
 Please enter the following words from your seed phrase:
 - Word #${randomIndexes[0] + 1}
 - Word #${randomIndexes[1] + 1}
 - Word #${randomIndexes[2] + 1}
 
-*(Reply in order, separated by spaces)*`, { parse_mode: "Markdown" });
+*(Reply in order, separated by spaces)*`,
+          { parse_mode: "Markdown" }
+        );
 
-          bot.once("message", async (response) => {
-            const userResponse = response.text.trim().split(" ");
-            if (
-              userResponse.length === 3 &&
-              userResponse[0] === challengeWords[0] &&
-              userResponse[1] === challengeWords[1] &&
-              userResponse[2] === challengeWords[2]
-            ) {
-              // Encrypt the new wallet's private key using the provided PIN
-              const encryptedPrivateKey = encryptPrivateKey(newWallet.privateKey, pin);
+        // Listen for the seed phrase verification response.
+        bot.once("message", async (response) => {
+          const userResponse = response.text.trim().split(" ");
+          if (
+            userResponse.length === 3 &&
+            userResponse[0] === challengeWords[0] &&
+            userResponse[1] === challengeWords[1] &&
+            userResponse[2] === challengeWords[2]
+          ) {
+            // Encrypt the new wallet's private key using the provided PIN.
+            const encryptedPrivateKey = encryptPrivateKey(newWallet.privateKey, pin);
 
-              // Update the user record with the new wallet details
-              user.walletAddress = newWallet.address;
-              user.encryptedPrivateKey = encryptedPrivateKey;
-              await user.save();
+            // Update the user record with the new wallet details.
+            user.walletAddress = newWallet.address;
+            user.encryptedPrivateKey = encryptedPrivateKey;
+            await user.save();
 
-              bot.sendMessage(chatId, "✅ *Seed phrase verified! Your wallet reset is complete.*", { parse_mode: "Markdown" });
-            } else {
-              bot.sendMessage(chatId, "❌ *Incorrect seed phrase verification!* Wallet reset failed. Try again with /resetwallet.");
-            }
-          });
-        } else if (callbackQuery.data.startsWith("seed_not_saved")) {
-          bot.sendMessage(chatId, "⚠️ *Please take your time and save your seed phrase securely.*\nUse /resetwallet again when you're ready.");
-        }
-      });
+            bot.sendMessage(targetChatId, "✅ *Seed phrase verified! Your wallet reset is complete.*", { parse_mode: "Markdown" });
+          } else {
+            bot.sendMessage(targetChatId, "❌ *Incorrect seed phrase verification!* Wallet reset failed. Try again with /resetwallet.");
+          }
+        });
+      } else if (callbackQuery.data.startsWith("seed_not_saved")) {
+        bot.sendMessage(targetChatId, "⚠️ *Please take your time and save your seed phrase securely.*\nUse /resetwallet again when you're ready.");
+      }
     });
-  }).catch((err) => {
-    console.error("Error in /resetwallet:", err);
-    bot.sendMessage(chatId, "❌ An error occurred while processing your wallet reset. Please try again later.");
   });
 });
+
+
 
 // Help Command
 bot.onText(/\/help/, (msg) => {
   const chatId = msg.chat.id;
-  const helpMessage = `
-  📘 *Available Commands:*
-  
-  /start - Create a new wallet or restore an existing wallet  
-  /help - Show this help message  
-  /balance - Check your wallet balance  
-  /tip <amount> <address> - Send STX tokens to a specific address  
-  /receive - Get your wallet address  
-  /resetwallet - Reset your wallet (requires PIN)  
-  /recover - Recover your wallet if you lost your PIN (requires seed phrase)  
-  `;
-  bot.sendMessage(chatId, helpMessage, { parse_mode: "Markdown" });
+  // If the command is used in a group chat, instruct user to contact in DM.
+  if (msg.chat.type !== "private") {
+    bot.sendMessage(
+      chatId,
+      "🚨 *Help command only available in DM.*\nPlease contact me in DM for help by clicking the button below:",
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "Contact me for help", url: "https://t.me/StacksTipBot?start=help" }
+            ]
+          ]
+        },
+      }
+    );
+  } else {
+    // In DM, show the full help message with available commands.
+    const helpMessage = `
+📘 *Available Commands:*
+
+*🎓 Student Commands:*
+/start - Create a new wallet or restore an existing wallet  
+/balance - Check your STX wallet balance  
+/receive - Get your wallet address  
+/fund - Learn how to fund your STX wallet  
+/leaderboard - View academic achievement rankings  
+/resetwallet - Reset your wallet (requires PIN)  
+/recover - Recover your wallet if you lost your PIN (requires seed phrase)
+
+*👨‍🏫 Lecturer Commands:*
+/tip <amount> - Reward STX to students you're replying to  
+/tip @username <amount> - Reward STX to specific students  
+/stats - View system statistics and overview  
+/help - Show this help message  
+
+🎓 *Academic Rewards System*
+This bot helps lecturers reward students for academic excellence and positive behavior!
+
+💡 *Best Practices for Lecturers:*
+• Use reasonable reward amounts (0.1 - 5 STX)
+• Recognize various achievements (attendance, participation, assignments)  
+• Check /leaderboard to motivate students
+• Use /stats to monitor system usage
+• Encourage students to use /fund if they need wallet funding help
+
+🌟 *Reward Categories Suggestions:*
+• 📚 Assignment Excellence: 0.5 - 2 STX
+• 🎯 Class Participation: 0.1 - 0.5 STX  
+• 📈 Academic Improvement: 1 - 3 STX
+• 🤝 Collaboration & Teamwork: 0.3 - 1 STX
+• 🏆 Outstanding Achievement: 2 - 5 STX
+    `;
+    bot.sendMessage(chatId, helpMessage, { parse_mode: "Markdown" });
+  }
 });
 
 
@@ -396,7 +497,7 @@ bot.onText(/\/balance/, async (msg) => {
 
     const accountData = await response.json();
 
-    if (!accountData?.fungible_tokens || !accountData.stx) {
+    if (!accountData?.stx) {
       return bot.sendMessage(
         chatId,
         '❌ Unexpected response structure. Please try again later.',
@@ -404,21 +505,13 @@ bot.onText(/\/balance/, async (msg) => {
       );
     }
 
-    let message = '';
-
     // STX Balance
     const stxBalance = parseInt(accountData.stx.balance) / 1e6;
-    message += `Your STX balance is: ${stxBalance} STX\n`;
-
-    // Mrbeans Balance
-    const mrBeansContractAddress = 'SP1MASMF30DRR4KDR5TG4RZEEVHBKS1ZX4TJZ8P06.mrbeans-stxcity::Beans';
-    const mrBeansBalanceData = accountData.fungible_tokens[mrBeansContractAddress];
-
-    if (mrBeansBalanceData?.balance) {
-      const beansBalance = parseInt(mrBeansBalanceData.balance) / 1e6;
-      message += `Your mrbeans token balance is: ${beansBalance} Beans`;
-    } else {
-      message += 'No mrbeans token balance found.';
+    let message = `💰 *Your STX Balance:* ${stxBalance} STX`;
+    
+    // Add funding suggestion if balance is low
+    if (stxBalance < 0.1) {
+      message += `\n\n⚠️ *Low Balance Alert!*\nYour STX balance is low. Use /fund to learn how to add funds to your wallet.`;
     }
 
     // Send balance with reply
@@ -431,6 +524,194 @@ bot.onText(/\/balance/, async (msg) => {
       '❌ An error occurred while fetching your balance. Please try again later.',
       replyOptions
     );
+  }
+});
+
+// Fund Command - Help users understand how to fund their STX wallet
+bot.onText(/\/fund/, async (msg) => {
+  const chatId = msg.chat.id;
+  const telegramId = String(msg.from.id);
+
+  // Check if user is registered
+  const user = await User.findOne({ telegramId });
+  if (!user) {
+    return bot.sendMessage(chatId, '❌ You are not registered yet. Use /start to register first.');
+  }
+
+  const fundingMessage = `
+💳 *How to Fund Your STX Wallet*
+
+Your wallet address: \`${user.walletAddress}\`
+
+📋 *Funding Methods:*
+
+1️⃣ *Buy STX from Exchanges:*
+   • Coinbase, Binance, Kraken, OKX
+   • KuCoin, Gate.io, Huobi
+   • After purchase, withdraw to your wallet address above
+
+2️⃣ *STX Faucets (Testnet/Small Amounts):*
+   • Stacks Explorer Faucet
+   • Community faucets for learning
+
+3️⃣ *P2P Trading:*
+   • Ask friends/colleagues to send STX
+   • Use /receive to share your address
+
+⚠️ *Important Security Tips:*
+• Never share your seed phrase or PIN
+• Double-check wallet addresses before sending
+• Start with small amounts for testing
+• This wallet is for educational/reward purposes
+
+🎓 *For Academic Use:*
+• Lecturers can fund student wallets as rewards
+• Students can earn STX for academic achievements
+• Use small amounts for meaningful recognition
+
+Need help? Contact your lecturer or system administrator.
+  `;
+
+  bot.sendMessage(chatId, fundingMessage, { 
+    parse_mode: "Markdown",
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "📋 Copy My Address", callback_data: `copy_address_${telegramId}` }],
+        [{ text: "💰 Check Balance", callback_data: `check_balance_${telegramId}` }]
+      ]
+    }
+  });
+
+  // Handle inline keyboard callbacks
+  bot.once("callback_query", async (callbackQuery) => {
+    if (!callbackQuery.data.includes(`_${telegramId}`)) return;
+
+    if (callbackQuery.data.startsWith("copy_address")) {
+      bot.sendMessage(chatId, `📋 *Copy this address:*\n\`${user.walletAddress}\``, { parse_mode: "Markdown" });
+    } else if (callbackQuery.data.startsWith("check_balance")) {
+      // Trigger balance check
+      bot.emit('message', { ...msg, text: '/balance' });
+    }
+  });
+});
+
+// Leaderboard Command - Show top students by STX balance (for academic motivation)
+bot.onText(/\/leaderboard/, async (msg) => {
+  const chatId = msg.chat.id;
+
+  try {
+    // Get all users with their wallet addresses
+    const users = await User.find({}, 'username walletAddress telegramId').limit(10);
+    
+    if (users.length === 0) {
+      return bot.sendMessage(chatId, '❌ No registered users found.');
+    }
+
+    let leaderboardData = [];
+
+    // Fetch balances for all users
+    for (const user of users) {
+      try {
+        const url = `https://api.hiro.so/extended/v1/address/${user.walletAddress}/balances`;
+        const response = await fetch(url);
+        
+        if (response.ok) {
+          const accountData = await response.json();
+          const stxBalance = parseInt(accountData.stx?.balance || 0) / 1e6;
+          
+          leaderboardData.push({
+            username: user.username || `User${user.telegramId.slice(-4)}`,
+            balance: stxBalance
+          });
+        }
+      } catch (error) {
+        console.error(`Error fetching balance for ${user.username}:`, error);
+      }
+    }
+
+    // Sort by balance (highest first)
+    leaderboardData.sort((a, b) => b.balance - a.balance);
+
+    // Create leaderboard message
+    let leaderboardMessage = `🏆 *Academic Achievement Leaderboard*\n\n`;
+    
+    leaderboardData.slice(0, 10).forEach((user, index) => {
+      const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
+      leaderboardMessage += `${medal} *${user.username}*: ${user.balance.toFixed(4)} STX\n`;
+    });
+
+    leaderboardMessage += `\n🎓 *Keep up the excellent academic work!*\n📊 Balances update in real-time`;
+
+    bot.sendMessage(chatId, leaderboardMessage, { parse_mode: "Markdown" });
+
+  } catch (error) {
+    console.error('Error fetching leaderboard:', error);
+    bot.sendMessage(chatId, '❌ An error occurred while fetching the leaderboard. Please try again later.');
+  }
+});
+
+// Stats Command - For lecturers/admins to see system overview
+bot.onText(/\/stats/, async (msg) => {
+  const chatId = msg.chat.id;
+
+  try {
+    // Get total number of registered users
+    const totalUsers = await User.countDocuments();
+    
+    // Get users with recent activity (optional - you could track last active time)
+    const usersWithWallets = await User.find({}, 'username walletAddress').limit(5);
+    
+    let totalStxInSystem = 0;
+    let activeWallets = 0;
+
+    // Calculate total STX in the system
+    for (const user of usersWithWallets) {
+      try {
+        const url = `https://api.hiro.so/extended/v1/address/${user.walletAddress}/balances`;
+        const response = await fetch(url);
+        
+        if (response.ok) {
+          const accountData = await response.json();
+          const stxBalance = parseInt(accountData.stx?.balance || 0) / 1e6;
+          totalStxInSystem += stxBalance;
+          if (stxBalance > 0) activeWallets++;
+        }
+      } catch (error) {
+        console.error(`Error fetching balance for stats:`, error);
+      }
+    }
+
+    const statsMessage = `
+📊 *Academic Rewards System Statistics*
+
+👥 *Total Registered Users:* ${totalUsers}
+💰 *Total STX in System:* ${totalStxInSystem.toFixed(4)} STX
+🏦 *Active Wallets (with balance):* ${activeWallets}
+📈 *System Status:* ✅ Operational
+
+🎓 *Academic Features:*
+• Reward distribution system
+• Real-time balance tracking  
+• Leaderboard motivation
+• Secure wallet management
+
+💡 *Usage Tips for Lecturers:*
+• Reward amounts: 0.1 - 5 STX recommended
+• Use /leaderboard to motivate students
+• Students can use /fund for wallet funding help
+• All transactions are recorded on Stacks blockchain
+
+🔧 *System Info:*
+• Network: Stacks Mainnet
+• Database: MongoDB Connected
+• Security: PIN-encrypted private keys
+    `;
+
+    bot.sendMessage(chatId, statsMessage, { parse_mode: "Markdown" });
+
+  } catch (error) {
+    console.error('Error fetching stats:', error);
+    bot.sendMessage(chatId, '❌ An error occurred while fetching system statistics. Please try again later.');
   }
 });
 
@@ -467,70 +748,95 @@ async function getNonce(address) {
  * 2. /tip @username amount  (used when not replying)
  *
  * In both cases, a DM is sent to the tipper to securely collect their 5-digit PIN.
- * This version sends Beans tokens via a contract call to the token's "transfer" function.
+ * This version sends STX tokens directly using makeSTXTokenTransfer.
  */
-// Make sure to import the necessary functions and modules.
-
-
-// Inside your /tip command
 bot.onText(/\/tip(?:\s+(@\S+))?\s+(\d+(\.\d+)?)/, async (msg, match) => {
-  const groupChatId = msg.chat.id;
+  const chatId = msg.chat.id;
   const tipperTelegramId = String(msg.from.id);
   const optionalUsername = match[1];
   const tipAmount = parseFloat(match[2]);
 
-  // Declare timeout in this scope.
+  // Declare timeout in this scope
   let timeout;
 
   try {
-    // Validate tip amount.
-    if (isNaN(tipAmount) || tipAmount <= 0) {
-      return bot.sendMessage(groupChatId, "❌ Invalid tip amount provided.");
+    // Validate tip amount with academic context
+    if (isNaN(tipAmount) || tipAmount <= 0) { 
+      return bot.sendMessage(chatId, "❌ Invalid tip amount provided. Please enter a valid positive number.");
     }
 
-    // Look up the tipper.
+    // Suggest reasonable academic reward amounts
+    if (tipAmount > 10) {
+      const confirmMsg = await bot.sendMessage(chatId, 
+        `⚠️ You're about to tip ${tipAmount} STX. For academic rewards, consider smaller amounts (0.1 - 5 STX).\n\nProceed anyway?`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "✅ Proceed", callback_data: `proceed_${tipperTelegramId}` }],
+              [{ text: "❌ Cancel", callback_data: `cancel_${tipperTelegramId}` }]
+            ]
+          }
+        }
+      );
+
+      // Wait for confirmation
+      return new Promise((resolve) => {
+        bot.once("callback_query", async (callbackQuery) => {
+          if (!callbackQuery.data.includes(`_${tipperTelegramId}`)) return;
+          
+          if (callbackQuery.data.startsWith("cancel")) {
+            return bot.sendMessage(chatId, "❌ Tip cancelled.");
+          }
+          // If proceed, continue with the tip process
+        });
+      });
+    }
+
+    // Look up the tipper
     const tipper = await User.findOne({ telegramId: tipperTelegramId });
     if (!tipper) {
-      return bot.sendMessage(groupChatId, "❌ You are not registered. Use /start to register.");
+      return bot.sendMessage(chatId, "❌ You are not registered. Use /start to register.");
     }
 
-    // Determine the recipient.
+    // Determine the recipient
     let recipient;
     if (msg.reply_to_message) {
       const recipientTelegramId = String(msg.reply_to_message.from.id);
       recipient = await User.findOne({ telegramId: recipientTelegramId });
       if (!recipient) {
-        return bot.sendMessage(groupChatId, "❌ The recipient is not registered.");
+        return bot.sendMessage(chatId, "❌ The recipient is not registered.");
       }
     } else if (optionalUsername) {
       const username = optionalUsername.replace('@', '');
       recipient = await User.findOne({ username });
       if (!recipient) {
-        return bot.sendMessage(groupChatId, `❌ @${username} is not registered.`);
+        return bot.sendMessage(chatId, `❌ @${username} is not registered.`);
       }
     } else {
-      return bot.sendMessage(groupChatId, "❌ Please reply to a user's message or specify @username.");
+      return bot.sendMessage(chatId, "❌ Please reply to a user's message or specify @username.");
     }
 
-    // Notify the group (replying to the original tip message) to check their DM.
-    await bot.sendMessage(
-      groupChatId,
-      `@${msg.from.username || tipperTelegramId}, check your DMs to confirm your bean tip.`,
-      { reply_to_message_id: msg.message_id }
-    );
+    // If the command is NOT in a private DM, notify the tipper to check their DMs.
+    if (msg.chat.type !== 'private') {
+      await bot.sendMessage(
+        chatId,
+        `@${msg.from.username || tipperTelegramId}, check your DMs to confirm your STX tip.`,
+        { reply_to_message_id: msg.message_id }
+      );
+    }
 
     // Send a DM to the tipper prompting for their 5-digit PIN.
     const dmMsg = await bot.sendMessage(
       tipperTelegramId,
-      `You are tipping ${tipAmount} Beans to @${recipient.username || recipient.telegramId}.\n` +
+      `You are tipping ${tipAmount} STX to @${recipient.username || recipient.telegramId}.\n` +
       "Please reply with your 5-digit PIN to confirm the tip:",
       { reply_markup: { force_reply: true } }
     );
 
-    // Set up a reply listener in DM.
+    // Set up a reply listener in DM
     const replyListener = async (replyMsg) => {
       try {
-        // Validate that this reply is in DM, from the same tipper, and replying to our DM.
+        // Validate that this reply is in DM, from the same tipper, and replying to our DM
         if (
           !replyMsg.reply_to_message ||
           replyMsg.reply_to_message.message_id !== dmMsg.message_id ||
@@ -539,15 +845,15 @@ bot.onText(/\/tip(?:\s+(@\S+))?\s+(\d+(\.\d+)?)/, async (msg, match) => {
           return;
         }
 
-        // Remove listener and cancel the timeout.
+        // Remove listener and cancel the timeout
         bot.removeListener('message', replyListener);
         clearTimeout(timeout);
 
-        // Process the PIN.
+        // Process the PIN
         const pin = replyMsg.text.trim();
-        await bot.deleteMessage(tipperTelegramId, replyMsg.message_id).catch(() => { });
+        await bot.deleteMessage(tipperTelegramId, replyMsg.message_id).catch(() => {});
 
-        // Decrypt the tipper's private key using the provided PIN.
+        // Decrypt the tipper's private key using the provided PIN
         let decryptedPrivateKey;
         try {
           decryptedPrivateKey = decryptPrivateKey(tipper.encryptedPrivateKey, pin);
@@ -555,62 +861,61 @@ bot.onText(/\/tip(?:\s+(@\S+))?\s+(\d+(\.\d+)?)/, async (msg, match) => {
           return bot.sendMessage(tipperTelegramId, "❌ Invalid PIN. Tip cancelled.");
         }
 
+        // Get nonce and prepare STX transfer
         const nonce = await getNonce(tipper.walletAddress);
-        const assetAddress = 'SP1MASMF30DRR4KDR5TG4RZEEVHBKS1ZX4TJZ8P06';
-        const assetAddressContractName = 'SP1MASMF30DRR4KDR5TG4RZEEVHBKS1ZX4TJZ8P06.mrbeans-stxcity';
-        const assetContractName = 'mrbeans-stxcity';
-        const tokenName = 'Beans';
-        const amountBeans = BigInt(Math.round(tipAmount * 1e6));
+        const amountMicroSTX = BigInt(Math.round(tipAmount * 1e6));
 
-        const postCondition = Pc.principal(tipper.walletAddress)
-          .willSendLte(amountBeans)
-          .ft(assetAddressContractName, tokenName);
-
+        // Define transaction options for STX transfer
         const txOptions = {
-          contractAddress: assetAddress,
-          contractName: assetContractName,
-          functionName: 'transfer',
-          functionArgs: [
-            uintCV(amountBeans),
-            standardPrincipalCV(tipper.walletAddress),
-            standardPrincipalCV(recipient.walletAddress),
-            noneCV()
-          ],
+          recipient: recipient.walletAddress,
+          amount: amountMicroSTX,
           senderKey: decryptedPrivateKey,
-          fee: BigInt(5000),
-          nonce: nonce.toString(),
-          network: 'mainnet',
-          postConditions: [postCondition],
+          network,
+          fee: BigInt(5000), // Transaction fee in microSTX
+          nonce: nonce,
+          memo: "STX Tip",
           postConditionMode: PostConditionMode.Allow
         };
 
-        console.log("TxOptions:", txOptions);
-
-        const transaction = await makeContractCall(txOptions);
-        if (!transaction) {
-          throw new Error("Transaction creation failed");
-        }
-
-        console.log("Transaction Object:", transaction);
-
-        // Broadcast the transaction.
+        // Create and broadcast the transaction
+        const transaction = await makeSTXTokenTransfer(txOptions);
         const result = await broadcastTransaction({ transaction, network });
+        
+        if (result.error) {
+          throw new Error(`Broadcast failed: ${result.error}`);
+        }
+        
         const explorerLink = `https://explorer.hiro.so/txid/${result.txid}?chain=mainnet`;
         console.log("Broadcast Result:", result);
 
-        // Notify the tipper in DM.
-        await bot.sendMessage(
-          tipperTelegramId,
-          `✅ ${tipAmount} Beans sent successfully!\nTX ID: ${explorerLink}`
-        );
-
-        // Also notify the group (replying to the original tip message).
-        await bot.sendMessage(
-          groupChatId,
-          `✅ ${tipAmount} Beans tip from @${msg.from.username || tipperTelegramId} to @${recipient.username || recipient.telegramId}!`,
-          { reply_to_message_id: msg.message_id }
-        );
-
+        // For DM-initiated commands, send the TX link to both tipper and recipient.
+        if (msg.chat.type === 'private') {
+          await bot.sendMessage(
+            tipperTelegramId,
+            `✅ ${tipAmount} STX reward sent successfully! 🎓\nTX ID: ${explorerLink}\n\n💡 Great job rewarding academic excellence!`
+          );
+          if (recipient.telegramId) {
+            await bot.sendMessage(
+              recipient.telegramId,
+              `🎉 Congratulations! You've received an academic reward of ${tipAmount} STX from @${msg.from.username || tipperTelegramId}! 🎓\n\nKeep up the excellent work!\nTX ID: ${explorerLink}`
+            );
+          }
+        } else {
+          // In group chats, notify the tipper in DM and the group as before.
+          await bot.sendMessage(
+            tipperTelegramId,
+            `✅ ${tipAmount} STX reward sent successfully! 🎓\nTX ID: ${explorerLink}`
+          );
+          await bot.sendMessage(
+            recipient.telegramId,
+            `🎉 Congratulations! You've received an academic reward of ${tipAmount} STX from @${msg.from.username || tipperTelegramId}! 🎓\n\nKeep up the excellent work!\nTX ID: ${explorerLink}`
+          );
+          await bot.sendMessage(
+            chatId,
+            `🎓 Academic Reward: ${tipAmount} STX from @${msg.from.username || tipperTelegramId} to @${recipient.username || recipient.telegramId}!\n\n✨ Recognizing academic excellence and positive behavior!`,
+            { reply_to_message_id: msg.message_id }
+          );
+        }
       } catch (error) {
         console.error("Tip processing error:", error);
         bot.sendMessage(
@@ -620,18 +925,19 @@ bot.onText(/\/tip(?:\s+(@\S+))?\s+(\d+(\.\d+)?)/, async (msg, match) => {
       }
     };
 
-    // Set up the DM reply listener with a timeout.
+    // Set up the DM reply listener with a 5-minute timeout
     bot.on('message', replyListener);
     timeout = setTimeout(() => {
       bot.removeListener('message', replyListener);
       bot.sendMessage(tipperTelegramId, "⌛ Tip confirmation timed out.");
-    }, 300000); // 5-minute timeout
+    }, 300000);
 
   } catch (error) {
     console.error("Tip command error:", error);
-    bot.sendMessage(groupChatId, "❌ An error occurred. Please try again.");
+    bot.sendMessage(chatId, "❌ An error occurred. Please try again.");
   }
 });
+
 
 
 // /recover command implementation
@@ -641,7 +947,7 @@ bot.onText(/\/recover/, async (msg) => {
   const isGroupChat = msg.chat.type !== 'private';
 
   if (isGroupChat) {
-    return bot.sendMessage(chatId, "🚨 *Please use the recover command in a private message (DM) with the bot.*\n\nClick here to start: [Start DM](t.me/Beans_tipbot)", { parse_mode: "Markdown" });
+    return bot.sendMessage(chatId, "🚨 *Please use the recover command in a private message (DM) with the bot.*\n\nClick here to start: [Start DM](t.me/StacksTipBot)", { parse_mode: "Markdown" });
   }
 
   try {
