@@ -30,7 +30,29 @@ mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('MongoDB Connected'))
   .catch(err => console.error('MongoDB Connection Error:', err));
 
-const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
+const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { 
+  polling: {
+    interval: 300,
+    autoStart: true,
+    params: {
+      timeout: 10
+    }
+  }
+});
+
+// Handle polling errors gracefully
+bot.on('polling_error', (error) => {
+  console.log('Polling error:', error.message);
+  if (error.message.includes('409 Conflict')) {
+    console.log('⚠️  Another bot instance detected. Stopping polling...');
+    bot.stopPolling();
+    setTimeout(() => {
+      console.log('🔄 Restarting polling...');
+      bot.startPolling();
+    }, 5000);
+  }
+});
+
 // const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN);
 
 app.post("/webhook", (req, res) => {
