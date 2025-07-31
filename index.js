@@ -76,6 +76,18 @@ function encryptPrivateKey(privateKey, pin) {
 }
 
 /**
+ * Helper function to format username display
+ */
+function formatUsername(user, includeAt = true) {
+  const prefix = includeAt ? '@' : '';
+  if (user.username) {
+    return `${prefix}${user.username}`;
+  }
+  // If no username, create a friendly display name
+  return `${prefix}Student${user.telegramId.slice(-4)}`;
+}
+
+/**
  * Helper function to generate a specified number of unique random indexes.
  */
 function generateUniqueIndexes(max, count) {
@@ -110,7 +122,7 @@ bot.onText(/\/start/, async (msg) => {
 
   // Check if the command is used in a private message or group
   if (msg.chat.type !== 'private') {
-    return bot.sendMessage(chatId, "🚨 *Please use the start command in a private message (DM) with the bot.*\n\nClick here to start: [Start DM](t.me/StacksTipBot)", { parse_mode: "Markdown" });
+    return bot.sendMessage(chatId, "🚨 *Please use the start command in a private message (DM) with the bot.*\n\nClick here to start: [Start DM](t.me/RewardScholarsBot)", { parse_mode: "Markdown" });
   }
 
   try {
@@ -265,7 +277,7 @@ bot.onText(/\/resetwallet/, async (msg) => {
   if (msg.chat.type !== 'private') {
     bot.sendMessage(
       chatId,
-      `@${msg.from.username || telegramId}, please check your DM for wallet reset instructions.`
+      `${formatUsername(msg.from)}, please check your DM for wallet reset instructions.`
     );
     targetChatId = telegramId; // Use DM for further interaction.
   }
@@ -413,7 +425,7 @@ bot.onText(/\/help/, (msg) => {
         reply_markup: {
           inline_keyboard: [
             [
-              { text: "Contact me for help", url: "https://t.me/StacksTipBot?start=help" }
+              { text: "Contact me for help", url: "https://t.me/RewardScholarsBot?start=help" }
             ]
           ]
         },
@@ -641,7 +653,7 @@ bot.onText(/\/leaderboard/, async (msg) => {
           const stxBalance = parseInt(accountData.stx?.balance || 0) / 1e6;
           
           leaderboardData.push({
-            username: user.username || `User${user.telegramId.slice(-4)}`,
+            username: user.username || `Student${user.telegramId.slice(-4)}`,
             balance: stxBalance
           });
         }
@@ -825,13 +837,13 @@ bot.onText(/\/tip(?:\s+(@\S+))?\s+(\d+(\.\d+)?)/, async (msg, match) => {
       const recipientTelegramId = String(msg.reply_to_message.from.id);
       recipient = await User.findOne({ telegramId: recipientTelegramId });
       if (!recipient) {
-        return bot.sendMessage(chatId, "❌ The recipient is not registered.");
+        return bot.sendMessage(chatId, "❌ The recipient is not registered. They need to use /start first to create a wallet.");
       }
     } else if (optionalUsername) {
       const username = optionalUsername.replace('@', '');
       recipient = await User.findOne({ username });
       if (!recipient) {
-        return bot.sendMessage(chatId, `❌ @${username} is not registered.`);
+        return bot.sendMessage(chatId, `❌ ${optionalUsername} is not registered. They need to use /start first to create a wallet.`);
       }
     } else {
       return bot.sendMessage(chatId, "❌ Please reply to a user's message or specify @username.");
@@ -841,7 +853,7 @@ bot.onText(/\/tip(?:\s+(@\S+))?\s+(\d+(\.\d+)?)/, async (msg, match) => {
     if (msg.chat.type !== 'private') {
       await bot.sendMessage(
         chatId,
-        `@${msg.from.username || tipperTelegramId}, check your DMs to confirm your STX tip.`,
+        `${formatUsername(msg.from)}, check your DMs to confirm your STX tip.`,
         { reply_to_message_id: msg.message_id }
       );
     }
@@ -849,9 +861,9 @@ bot.onText(/\/tip(?:\s+(@\S+))?\s+(\d+(\.\d+)?)/, async (msg, match) => {
     // Send a DM to the tipper prompting for their 5-digit PIN.
     const dmMsg = await bot.sendMessage(
       tipperTelegramId,
-      `You are tipping ${tipAmount} STX to @${recipient.username || recipient.telegramId}.\n` +
-      "Please reply with your 5-digit PIN to confirm the tip:",
-      { reply_markup: { force_reply: true } }
+      `🎓 *Academic Reward Confirmation*\n\nYou are rewarding ${tipAmount} STX to ${formatUsername(recipient)}.\n` +
+      "Please reply with your 5-digit PIN to confirm the reward:",
+      { parse_mode: "Markdown", reply_markup: { force_reply: true } }
     );
 
     // Set up a reply listener in DM
@@ -918,7 +930,7 @@ bot.onText(/\/tip(?:\s+(@\S+))?\s+(\d+(\.\d+)?)/, async (msg, match) => {
           if (recipient.telegramId) {
             await bot.sendMessage(
               recipient.telegramId,
-              `🎉 Congratulations! You've received an academic reward of ${tipAmount} STX from @${msg.from.username || tipperTelegramId}! 🎓\n\nKeep up the excellent work!\nTX ID: ${explorerLink}`
+              `🎉 Congratulations! You've received an academic reward of ${tipAmount} STX from ${formatUsername(msg.from)}! 🎓\n\nKeep up the excellent work!\nTX ID: ${explorerLink}`
             );
           }
         } else {
@@ -929,11 +941,11 @@ bot.onText(/\/tip(?:\s+(@\S+))?\s+(\d+(\.\d+)?)/, async (msg, match) => {
           );
           await bot.sendMessage(
             recipient.telegramId,
-            `🎉 Congratulations! You've received an academic reward of ${tipAmount} STX from @${msg.from.username || tipperTelegramId}! 🎓\n\nKeep up the excellent work!\nTX ID: ${explorerLink}`
+            `🎉 Congratulations! You've received an academic reward of ${tipAmount} STX from ${formatUsername(msg.from)}! 🎓\n\nKeep up the excellent work!\nTX ID: ${explorerLink}`
           );
           await bot.sendMessage(
             chatId,
-            `🎓 Academic Reward: ${tipAmount} STX from @${msg.from.username || tipperTelegramId} to @${recipient.username || recipient.telegramId}!\n\n✨ Recognizing academic excellence and positive behavior!`,
+            `🎓 Academic Reward: ${tipAmount} STX from ${formatUsername(msg.from)} to ${formatUsername(recipient)}!\n\n✨ Recognizing academic excellence and positive behavior!`,
             { reply_to_message_id: msg.message_id }
           );
         }
@@ -968,7 +980,7 @@ bot.onText(/\/recover/, async (msg) => {
   const isGroupChat = msg.chat.type !== 'private';
 
   if (isGroupChat) {
-    return bot.sendMessage(chatId, "🚨 *Please use the recover command in a private message (DM) with the bot.*\n\nClick here to start: [Start DM](t.me/StacksTipBot)", { parse_mode: "Markdown" });
+    return bot.sendMessage(chatId, "🚨 *Please use the recover command in a private message (DM) with the bot.*\n\nClick here to start: [Start DM](t.me/RewardScholarsBot)", { parse_mode: "Markdown" });
   }
 
   try {
