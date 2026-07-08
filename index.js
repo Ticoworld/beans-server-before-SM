@@ -33,7 +33,7 @@ mongoose.connect(process.env.MONGO_URI)
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: false });
 
 // Set webhook URL for production
-const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://stx-academic-bot.onrender.com/webhook';
+const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://academic-reward-bot.onrender.com/webhook';
 
 // Set up webhook in production
 if (process.env.NODE_ENV === 'production') {
