@@ -1,80 +1,38 @@
-# Academic STX Reward System
+PROJECT TITLE:
+Design and Implementation of a Blockchain Tech Powered Reward System for Student Academic Activities Enhancement in AE-FUNAI
 
-Telegram bot for rewarding academic achievement with STX on the Stacks network.
+SOFTWARE NAME:
+RewardScholarsBot
 
-## What It Does
-- Creates a wallet for each registered student
-- Stores encrypted private keys in MongoDB
-- Lets lecturers send STX rewards
-- Shows balances, leaderboard, and system stats
-- Exposes a `/health` endpoint for monitoring
+SOFTWARE TYPE:
+Telegram Bot
 
-## Features
-- Seed phrase verification during wallet setup
-- PIN-protected wallet recovery and reset
-- Balance lookup from the Hiro API
-- Leaderboard and stats views
-- Optional keep-alive ping for hosting platforms
+WORKING SOFTWARE LINK:
+https://t.me/RewardScholarsBot
 
-## Technologies Used
-- Node.js
-- Express
-- MongoDB and Mongoose
-- Telegram Bot API
-- Stacks wallet and transaction libraries
+SOURCE CODE:
+The source code is inside Group_1_Source_Code.zip
 
-## Commands
-- `/start` - Register and create a wallet
-- `/balance` - Check STX balance
-- `/receive` - Show wallet address
-- `/fund` - Funding guidance
-- `/leaderboard` - Top users by balance
-- `/stats` - System stats
-- `/resetwallet` - Reset wallet with PIN
-- `/recover` - Recover wallet with seed phrase
-- `/help` - Show command help
-- `/tip` - Send STX to another user
+SCREENSHOTS:
+The screenshots are inside Group_1_Project_Screenshots.zip
 
-## Environment Variables
-Copy `.env.example` to `.env` and fill in:
+HOW TO TEST:
+1. Open https://t.me/RewardScholarsBot
+2. Click Start
+3. Send /start
+4. Send /help
+5. Send /balance
+6. Send /fund
+7. Send /receive
+8. Send /leaderboard
+9. Send /stats
 
-- `TELEGRAM_BOT_TOKEN`
-- `MONGO_URI`
-- `PRIVATE_KEY_SECRET`
-- `PORT`
-- `NODE_ENV`
-- `ENABLE_KEEP_ALIVE`
-- `SELF_PING_URL`
-- `MIN_TIP_AMOUNT`
-- `MAX_TIP_AMOUNT`
-- `LOW_BALANCE_THRESHOLD`
+TECHNOLOGIES USED:
+Node.js
+Express.js
+MongoDB
+Telegram Bot API
+Stacks STX Blockchain
 
-## Install
-```bash
-npm install
-```
-
-## Run
-```bash
-npm start
-```
-
-For local development, set `NODE_ENV=development` in `.env`.
-
-## Test Health Endpoint
-After the server starts, open:
-
-```text
-http://localhost:5000/health
-```
-
-Or run the test script:
-
-```bash
-npm run health
-```
-
-## Notes
-- The app expects MongoDB to be running and reachable.
-- Keep real secrets out of the repository.
-- If you deploy to a platform like Render, set `PORT` from the platform environment.
+NOTE:
+This project is a Telegram bot, so the working software runs through Telegram, not as a desktop application.
